@@ -1,2 +1,17 @@
-**/__pycache__
+# .gitignore
+*.pkl
+*.pt
+*.npy
+*.pickle
+.ckpt/
+.ckpt
+__pycache__/
 .DS_Store
+*.ipynb_checkpoints/
+env/
+venv/
+*.egg-info/
+*.so
+build/
+dist/
+ctcdecode/build/
