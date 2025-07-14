@@ -14,5 +14,6 @@ venv/
 *.so
 build/
 dist/
+ctcdecode/
 ctcdecode/build/
 ctcdecode/third_party/
