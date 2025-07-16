@@ -24,22 +24,23 @@ from seq_scripts import seq_train, seq_eval, seq_feature_generation
 from torch.cuda.amp import autocast as autocast
 import datetime
 
+import os
+import shutil
+
 def prepare_work_dir(work_dir):
     if os.path.exists(work_dir):
-        contents = os.listdir(work_dir)
-        has_checkpoints = any(f.endswith('.pt') or f.endswith('.pth') for f in contents)
-        has_logs = 'log.txt' in contents
-
-        if has_checkpoints or has_logs:
-            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_dir = f"{work_dir}_backup_{timestamp}"
-            print(f"⚠️  work_dir has logs or checkpoints. Backing up to: {backup_dir}")
-            shutil.move(work_dir, backup_dir)
-        else:
-            print(f"🧹 Cleaning empty work_dir: {work_dir}")
-            shutil.rmtree(work_dir)
-
+        try:
+            # Check if directory is empty
+            if len(os.listdir(work_dir)) == 0:
+                print(f"🧹 Cleaning empty work_dir: {work_dir}")
+                shutil.rmtree(work_dir, ignore_errors=True)
+            else:
+                print(f"⚠️  Warning: work_dir '{work_dir}' already exists and is not empty.")
+                print(f"ℹ️  Training will resume or overwrite depending on config/checkpoint logic.")
+        except Exception as e:
+            print(f"⚠️  Could not clean work_dir safely: {e}")
     os.makedirs(work_dir, exist_ok=True)
+
 
 class Processor():
     def __init__(self, arg):
