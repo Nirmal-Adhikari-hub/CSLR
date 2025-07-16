@@ -7,7 +7,7 @@ dataset_info:
   evaluation_dir: ./evaluation/slr_eval
   evaluation_prefix: phoenix2014-groundtruth
 decode_mode: beam
-device: 0,1,2,3
+device: 0
 eval_interval: 1
 evaluate_tool: python
 feeder: dataset.dataloader_video.BaseFeeder
@@ -22,6 +22,7 @@ feeder_args:
 ignore_weights: []
 load_checkpoints: null
 load_weights: null
+local_rank: 0
 log_interval: 10000
 loss_weights:
   ConvCTC: 1.0
