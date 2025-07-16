@@ -76,13 +76,13 @@ class Processor():
         slowfast_dst = os.path.join(self.arg.work_dir, 'slowfast_modules')
         if os.path.exists(slowfast_dst):
             shutil.rmtree(slowfast_dst, ignore_errors=True)
-        shutil.copytree('slowfast_modules', slowfast_dst)
+        shutil.copytree('slowfast_modules', slowfast_dst, dirs_exist_ok=True)
 
         # copy_tree('modules', self.arg.work_dir + 'modules')
         modules_dst = os.path.join(self.arg.work_dir, 'modules')
         if os.path.exists(modules_dst):
             shutil.rmtree(modules_dst, ignore_errors=True)
-        shutil.copytree('modules', modules_dst)
+        shutil.copytree('modules', modules_dst, dirs_exist_ok=True)
 
         self.recoder = utils.Recorder(self.arg.work_dir, self.arg.print_log, self.arg.log_interval)
         if self.arg.load_checkpoints or self.arg.load_weights:
@@ -203,7 +203,7 @@ class Processor():
             self.load_checkpoint_weights(model, optimizer)
         model = self.model_to_device(model)
         # self.kernel_sizes = model.conv1d.kernel_size
-        
+
         # self.kernel_sizes = model.module.conv1d.kernel_size
         if hasattr(model, "module") and hasattr(model.module, "conv1d"):
             self.kernel_sizes = model.module.conv1d.kernel_size
