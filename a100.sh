@@ -24,4 +24,5 @@ python -m torch.distributed.run --nproc_per_node=${NUM_GPUS} main.py \
     --dataset ${CONFIG} \
     --loss-weights Slow=0.25 Fast=0.25 \
     --work-dir ${WORK_DIR} \
+    --batch-size 2 \
     2>&1 | tee $LOGFILE
