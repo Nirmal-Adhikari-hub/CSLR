@@ -72,17 +72,30 @@ class Processor():
             print(f"⚠️  baseline.yaml not found.")
 
 
+        # define an ignore pattern for any __pycache__ or .pyc files
+        ignore_patterns = shutil.ignore_patterns('__pycache__', '*.pyc')
+
         # copy_tree('slowfast_modules', self.arg.work_dir + 'slowfast_modules')        
         slowfast_dst = os.path.join(self.arg.work_dir, 'slowfast_modules')
         if os.path.exists(slowfast_dst):
             shutil.rmtree(slowfast_dst, ignore_errors=True)
-        shutil.copytree('slowfast_modules', slowfast_dst, dirs_exist_ok=True)
+        shutil.copytree(
+                            'slowfast_modules',
+                            slowfast_dst,
+                            dirs_exist_ok=True,
+                            ignore=ignore_patterns
+                        )
 
         # copy_tree('modules', self.arg.work_dir + 'modules')
         modules_dst = os.path.join(self.arg.work_dir, 'modules')
         if os.path.exists(modules_dst):
             shutil.rmtree(modules_dst, ignore_errors=True)
-        shutil.copytree('modules', modules_dst, dirs_exist_ok=True)
+        shutil.copytree(
+                            'modules',
+                            modules_dst,
+                            dirs_exist_ok=True,
+                            ignore=ignore_patterns
+                        )
 
         self.recoder = utils.Recorder(self.arg.work_dir, self.arg.print_log, self.arg.log_interval)
         if self.arg.load_checkpoints or self.arg.load_weights:
