@@ -110,37 +110,37 @@ class SLRModel(nn.Module):
         }
 
     def criterion_calculation(self, ret_dict, label, label_lgt):
-        loss = 0
-        for k, weight in self.loss_weights.items():
-            if k == 'SeqCTC':
-                loss += weight * self.loss['CTCLoss'](ret_dict["sequence_logits"][0].log_softmax(-1),
-                                                      label.cpu().int(), ret_dict["feat_len"].cpu().int(),
-                                                      label_lgt.cpu().int()).mean()
-            elif k == 'Slow' or k == 'Fast':
-                i = 1 if k == 'Slow' else 2
-                loss += weight * self.loss_weights['SeqCTC'] * self.loss['CTCLoss'](ret_dict["sequence_logits"][i].log_softmax(-1),
-                                                                                label.cpu().int(), ret_dict["feat_len"].cpu().int(),
-                                                                                label_lgt.cpu().int()).mean()
-                if 'ConvCTC' in self.loss_weights:
-                    loss += weight * self.loss_weights['ConvCTC'] * self.loss['CTCLoss'](ret_dict["conv_logits"][i].log_softmax(-1),
+        # Force float32 precision for loss-related operations to prevent AMP instability
+        with torch.cuda.amp.autocast(enabled=False):
+            loss = 0
+            for k, weight in self.loss_weights.items():
+                if k == 'SeqCTC':
+                    loss += weight * self.loss['CTCLoss'](ret_dict["sequence_logits"][0].log_softmax(-1),
+                                                        label.cpu().int(), ret_dict["feat_len"].cpu().int(),
+                                                        label_lgt.cpu().int()).mean()
+                elif k == 'Slow' or k == 'Fast':
+                    i = 1 if k == 'Slow' else 2
+                    loss += weight * self.loss_weights['SeqCTC'] * self.loss['CTCLoss'](ret_dict["sequence_logits"][i].log_softmax(-1),
                                                                                         label.cpu().int(), ret_dict["feat_len"].cpu().int(),
                                                                                         label_lgt.cpu().int()).mean()
-                if 'Dist' in self.loss_weights:
-                    # loss += weight * self.loss_weights['Dist'] * self.loss['distillation'](ret_dict["conv_intra_logits"][i],
-                    #                                                                     ret_dict["sequence_logits"].detach(),
-                    #                                                                     use_blank=False)
-                    loss += weight * self.loss_weights['Dist'] * self.loss['distillation'](ret_dict["conv_logits"][i],
-                                                                                        ret_dict["sequence_logits"][i].detach(),
-                                                                                        use_blank=False)
-            elif k == 'ConvCTC':
-                loss += weight * self.loss['CTCLoss'](ret_dict["conv_logits"][0].log_softmax(-1),
-                                                      label.cpu().int(), ret_dict["feat_len"].cpu().int(),
-                                                      label_lgt.cpu().int()).mean()
-            elif k == 'Dist':
-                loss += weight * self.loss['distillation'](ret_dict["conv_logits"][0],
-                                                           ret_dict["sequence_logits"][0].detach(),
-                                                           use_blank=False)
+                    if 'ConvCTC' in self.loss_weights:
+                        loss += weight * self.loss_weights['ConvCTC'] * self.loss['CTCLoss'](ret_dict["conv_logits"][i].log_softmax(-1),
+                                                                                            label.cpu().int(), ret_dict["feat_len"].cpu().int(),
+                                                                                            label_lgt.cpu().int()).mean()
+                    if 'Dist' in self.loss_weights:
+                        loss += weight * self.loss_weights['Dist'] * self.loss['distillation'](ret_dict["conv_logits"][i],
+                                                                                                ret_dict["sequence_logits"][i].detach(),
+                                                                                                use_blank=False)
+                elif k == 'ConvCTC':
+                    loss += weight * self.loss['CTCLoss'](ret_dict["conv_logits"][0].log_softmax(-1),
+                                                        label.cpu().int(), ret_dict["feat_len"].cpu().int(),
+                                                        label_lgt.cpu().int()).mean()
+                elif k == 'Dist':
+                    loss += weight * self.loss['distillation'](ret_dict["conv_logits"][0],
+                                                            ret_dict["sequence_logits"][0].detach(),
+                                                            use_blank=False)
         return loss
+
 
     def criterion_init(self):
         self.loss['CTCLoss'] = torch.nn.CTCLoss(reduction='none', zero_infinity=False)

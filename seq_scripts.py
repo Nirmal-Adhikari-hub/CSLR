@@ -1,5 +1,4 @@
 import os
-import pdb
 import sys
 import copy
 import torch
@@ -12,50 +11,6 @@ from torch.cuda.amp import autocast as autocast
 from torch.cuda.amp import GradScaler
 
 
-'''Original Code'''
-# def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
-#     model.train()
-#     loss_value = []
-#     clr = [group['lr'] for group in optimizer.optimizer.param_groups]
-#     scaler = GradScaler()
-#     tqdm_loader = tqdm(loader, ncols=100)
-#     nan = 0
-#     for batch_idx, data in enumerate(tqdm_loader):
-#         vid = device.data_to_device(data[0])
-#         vid_lgt = device.data_to_device(data[1])
-#         label = device.data_to_device(data[2])
-#         label_lgt = device.data_to_device(data[3])
-#         optimizer.zero_grad()
-#         with autocast():
-#             ret_dict = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
-#             loss = model.criterion_calculation(ret_dict, label, label_lgt)
-#         if np.isinf(loss.item()) or np.isnan(loss.item()):
-#             print('loss is nan')
-#             print(str(data[1])+'  frames')
-#             print(str(data[3])+'  glosses')
-#             del ret_dict
-#             del loss
-#             nan+=1
-#             if nan == 30:
-#                 exit()
-#             continue
-#         scaler.scale(loss).backward()
-#         scaler.step(optimizer.optimizer)
-#         scaler.update()
-#         # nn.utils.clip_grad_norm_(model.rnn.parameters(), 5)
-#         loss_value.append(loss.item())
-#         if batch_idx % recoder.log_interval == 0:
-#             recoder.print_log(
-#                 '\tEpoch: {}, Batch({}/{}) done. Loss: {:.8f}  lr:{:.6f}'
-#                     .format(epoch_idx, batch_idx, len(loader), loss.item(), clr[0]))
-#         tqdm_loader.set_postfix({'Loss' : loss.item()})
-#         del ret_dict
-#         del loss
-#     optimizer.scheduler.step()
-#     recoder.print_log('\tMean training loss: {:.10f}.'.format(np.mean(loss_value)))
-#     return 
-
-
 def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
     model.train()
     loss_value = []
@@ -64,46 +19,43 @@ def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
     tqdm_loader = tqdm(loader, ncols=100)
     nan = 0
 
-    # 🔁 Set epoch for shuffling with DistributedSampler
+    # 🔁 Set epoch for DistributedSampler if present
     if hasattr(loader, "sampler") and hasattr(loader.sampler, "set_epoch"):
         loader.sampler.set_epoch(epoch_idx)
 
     for batch_idx, data in enumerate(tqdm_loader):
-        # 🚚 Move to correct device
         vid = data[0].to(device, non_blocking=True)
         vid_lgt = data[1].to(device, non_blocking=True)
         label = data[2].to(device, non_blocking=True)
         label_lgt = data[3].to(device, non_blocking=True)
-
         optimizer.zero_grad()
         with autocast():
             ret_dict = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
             loss = model.criterion_calculation(ret_dict, label, label_lgt)
-
         if np.isinf(loss.item()) or np.isnan(loss.item()):
             print('loss is nan')
-            print(f'{str(data[1])} frames')
-            print(f'{str(data[3])} glosses')
-            del ret_dict, loss
+            print(str(data[1]) + '  frames')
+            print(str(data[3]) + '  glosses')
+            del ret_dict
+            del loss
             nan += 1
             if nan == 30:
                 exit()
             continue
-
         scaler.scale(loss).backward()
         scaler.step(optimizer.optimizer)
         scaler.update()
-
+        # nn.utils.clip_grad_norm_(model.rnn.parameters(), 5)
         loss_value.append(loss.item())
         if batch_idx % recoder.log_interval == 0:
             recoder.print_log(
-                f'\tEpoch: {epoch_idx}, Batch({batch_idx}/{len(loader)}) done. Loss: {loss.item():.8f}  lr:{clr[0]:.6f}'
-            )
+                '\tEpoch: {}, Batch({}/{}) done. Loss: {:.8f}  lr:{:.6f}'
+                    .format(epoch_idx, batch_idx, len(loader), loss.item(), clr[0]))
         tqdm_loader.set_postfix({'Loss': loss.item()})
-        del ret_dict, loss
-
+        del ret_dict
+        del loss
     optimizer.scheduler.step()
-    recoder.print_log(f'\tMean training loss: {np.mean(loss_value):.10f}.')
+    recoder.print_log('\tMean training loss: {:.10f}.'.format(np.mean(loss_value)))
     return
 
 
@@ -116,10 +68,10 @@ def seq_eval(cfg, loader, model, device, mode, epoch, work_dir, recoder,
     stat = {i: [0, 0] for i in range(len(loader.dataset.dict))}
     for batch_idx, data in enumerate(tqdm(loader, ncols=100)):
         recoder.record_timer("device")
-        vid = device.data_to_device(data[0])
-        vid_lgt = device.data_to_device(data[1])
-        label = device.data_to_device(data[2])
-        label_lgt = device.data_to_device(data[3])
+        vid = data[0].to(device, non_blocking=True)
+        vid_lgt = data[1].to(device, non_blocking=True)
+        label = data[2].to(device, non_blocking=True)
+        label_lgt = data[3].to(device, non_blocking=True)
         with torch.no_grad():
             ret_dict = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
 
@@ -184,8 +136,8 @@ def seq_feature_generation(loader, model, device, mode, work_dir, recoder):
 
     for batch_idx, data in tqdm(enumerate(loader)):
         recoder.record_timer("device")
-        vid = device.data_to_device(data[0])
-        vid_lgt = device.data_to_device(data[1])
+        vid = data[0].to(device, non_blocking=True)
+        vid_lgt = data[1].to(device, non_blocking=True)
         with torch.no_grad():
             ret_dict = model(vid, vid_lgt)
         if not os.path.exists(src_path):
