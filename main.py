@@ -22,20 +22,38 @@ import utils
 from modules.sync_batchnorm import convert_model
 from seq_scripts import seq_train, seq_eval, seq_feature_generation
 from torch.cuda.amp import autocast as autocast
+import datetime
+
+def prepare_work_dir(work_dir):
+    if os.path.exists(work_dir):
+        contents = os.listdir(work_dir)
+        has_checkpoints = any(f.endswith('.pt') or f.endswith('.pth') for f in contents)
+        has_logs = 'log.txt' in contents
+
+        if has_checkpoints or has_logs:
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_dir = f"{work_dir}_backup_{timestamp}"
+            print(f"⚠️  work_dir has logs or checkpoints. Backing up to: {backup_dir}")
+            shutil.move(work_dir, backup_dir)
+        else:
+            print(f"🧹 Cleaning empty work_dir: {work_dir}")
+            shutil.rmtree(work_dir)
+
+    os.makedirs(work_dir, exist_ok=True)
 
 class Processor():
     def __init__(self, arg):
         self.arg = arg
-        if os.path.exists(self.arg.work_dir):
-            answer = input('Current dir exists, do you want to remove and refresh it?\n')
-            if answer in ['yes','y','ok','1']:
-                print('Dir removed !')
-                shutil.rmtree(self.arg.work_dir, ignore_errors=True)
-                os.makedirs(self.arg.work_dir)
-            else:
-                print('Dir Not removed !')
-        else:
-            os.makedirs(self.arg.work_dir)
+        # if os.path.exists(self.arg.work_dir):
+        #     answer = input('Current dir exists, do you want to remove and refresh it?\n')
+        #     if answer in ['yes','y','ok','1']:
+        #         print('Dir removed !')
+        #         shutil.rmtree(self.arg.work_dir, ignore_errors=True)
+        #         os.makedirs(self.arg.work_dir)
+        #     else:
+        #         print('Dir Not removed !')
+        # else:
+        #     os.makedirs(self.arg.work_dir)
         if not self.arg.work_dir.endswith('/'):
             self.arg.work_dir = self.arg.work_dir + '/'
         shutil.copy2(__file__, self.arg.work_dir)
@@ -160,7 +178,8 @@ class Processor():
         elif self.arg.load_checkpoints:
             self.load_checkpoint_weights(model, optimizer)
         model = self.model_to_device(model)
-        self.kernel_sizes = model.conv1d.kernel_size
+        # self.kernel_sizes = model.conv1d.kernel_size
+        self.kernel_sizes = model.module.conv1d.kernel_size
         print("Loading model finished.")
         self.load_data()
         return model, optimizer
@@ -291,10 +310,36 @@ def setup_ddp():
     torch.cuda.set_device(local_rank)
     return local_rank
 
+# if __name__ == '__main__':
+#     sparser = utils.get_parser()
+#     p = sparser.parse_args()
+#     # p.config = "baseline_iter.yaml"
+#     if p.config is not None:
+#         with open(p.config, 'r') as f:
+#             try:
+#                 default_arg = yaml.load(f, Loader=yaml.FullLoader)
+#             except AttributeError:
+#                 default_arg = yaml.load(f)
+#         key = vars(p).keys()
+#         for k in default_arg.keys():
+#             if k not in key:
+#                 print('WRONG ARG: {}'.format(k))
+#                 assert (k in key)
+#         sparser.set_defaults(**default_arg)
+#     args = sparser.parse_args()
+#     with open(f"./configs/{args.dataset}.yaml", 'r') as f:
+#         args.dataset_info = yaml.load(f, Loader=yaml.FullLoader)
+
+#     args.local_rank = setup_ddp()
+#     processor = Processor(args)
+#     #utils.pack_code("./", args.work_dir)
+#     processor.start()
+
+
 if __name__ == '__main__':
     sparser = utils.get_parser()
     p = sparser.parse_args()
-    # p.config = "baseline_iter.yaml"
+
     if p.config is not None:
         with open(p.config, 'r') as f:
             try:
@@ -307,11 +352,17 @@ if __name__ == '__main__':
                 print('WRONG ARG: {}'.format(k))
                 assert (k in key)
         sparser.set_defaults(**default_arg)
+
     args = sparser.parse_args()
+
     with open(f"./configs/{args.dataset}.yaml", 'r') as f:
         args.dataset_info = yaml.load(f, Loader=yaml.FullLoader)
 
     args.local_rank = setup_ddp()
+
+    # ✅ Insert safe work_dir setup here
+    prepare_work_dir(args.work_dir)
+
     processor = Processor(args)
-    #utils.pack_code("./", args.work_dir)
+    # utils.pack_code("./", args.work_dir)
     processor.start()
