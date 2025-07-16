@@ -50,7 +50,8 @@ class Processor():
         self.save_arg()
         if self.arg.random_fix:
             self.rng = utils.RandomState(seed=self.arg.random_seed)
-        self.device = utils.GpuDataParallel()
+        # self.device = utils.GpuDataParallel()
+        self.device = torch.device(f"cuda:{self.arg.local_rank}")
         self.recoder = utils.Recorder(self.arg.work_dir, self.arg.print_log, self.arg.log_interval)
         self.dataset = {}
         self.data_loader = {}
@@ -165,12 +166,19 @@ class Processor():
         return model, optimizer
 
     def model_to_device(self, model):
-        model = model.to(self.device.output_device)
-        if len(self.device.gpu_list) > 1:
-            raise ValueError("AMP equipped with DataParallel has to manually write autocast() for each forward function, you can choose to do this by yourself")
-            # model.conv2d = nn.DataParallel(model.conv2d, device_ids=self.device.gpu_list, output_device=self.device.output_device)
-            # model = convert_model(model)
-        model.cuda()
+        '''Original code'''
+        # model = model.to(self.device.output_device)
+        # if len(self.device.gpu_list) > 1:
+        #     raise ValueError("AMP equipped with DataParallel has to manually write autocast() for each forward function, you can choose to do this by yourself")
+        #     # model.conv2d = nn.DataParallel(model.conv2d, device_ids=self.device.gpu_list, output_device=self.device.output_device)
+        #     # model = convert_model(model)
+        # model.cuda()
+
+        '''Modified code'''
+        model = model.to(self.device)
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[self.arg.local_rank], output_device=self.arg.local_rank
+        )
         return model
 
     def load_model_weights(self, model, weight_path):
@@ -233,12 +241,35 @@ class Processor():
         # np.random.seed(int(self.arg.random_seed)+int(self.arg.device)+worker_id)
         np.random.seed(np.random.get_state()[1][0] + worker_id)
     def build_dataloader(self, dataset, mode, train_flag):
+        ''' Added for the distributed training '''
+        if train_flag:
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset, shuffle=True
+            )
+        else:
+            sampler = None
+        '''END of code addition'''    
+        
+        ''' Original code'''
+        # return torch.utils.data.DataLoader(
+        #     dataset,
+        #     batch_size=self.arg.batch_size if mode == "train" else self.arg.test_batch_size,
+        #     shuffle=train_flag,
+        #     drop_last=train_flag,
+        #     num_workers=self.arg.num_worker,  # if train_flag else 0
+        #     collate_fn=self.feeder.collate_fn,
+        #     pin_memory=True,
+        #     worker_init_fn=self.init_fn,
+        # )
+
+        '''Modified code'''
         return torch.utils.data.DataLoader(
             dataset,
             batch_size=self.arg.batch_size if mode == "train" else self.arg.test_batch_size,
-            shuffle=train_flag,
+            shuffle=(sampler is None),
             drop_last=train_flag,
-            num_workers=self.arg.num_worker,  # if train_flag else 0
+            sampler=sampler,
+            num_workers=self.arg.num_worker,
             collate_fn=self.feeder.collate_fn,
             pin_memory=True,
             worker_init_fn=self.init_fn,
@@ -251,6 +282,14 @@ def import_class(name):
     mod = getattr(mod, components[1])
     return mod
 
+
+import torch.distributed as dist
+
+def setup_ddp():
+    dist.init_process_group(backend='nccl')
+    local_rank = int(os.environ['LOCAL_RANK'])
+    torch.cuda.set_device(local_rank)
+    return local_rank
 
 if __name__ == '__main__':
     sparser = utils.get_parser()
@@ -271,6 +310,8 @@ if __name__ == '__main__':
     args = sparser.parse_args()
     with open(f"./configs/{args.dataset}.yaml", 'r') as f:
         args.dataset_info = yaml.load(f, Loader=yaml.FullLoader)
+
+    args.local_rank = setup_ddp()
     processor = Processor(args)
     #utils.pack_code("./", args.work_dir)
     processor.start()
