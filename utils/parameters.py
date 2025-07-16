@@ -126,7 +126,7 @@ def get_parser():
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # optim
     parser.add_argument(
-        '--batch-size', type=int, default=16, help='training batch size')
+        '--batch-size', type=int, default=64, help='training batch size')
     parser.add_argument(
         '--test-batch-size', type=int, default=8, help='test batch size')
 
