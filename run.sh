@@ -14,7 +14,7 @@ LOGFILE="${LOGDIR}/train_$(date +%Y%m%d_%H%M%S).log"
 echo "Logging output to: $LOGFILE"
 
 # Run training and log output
-torchrun --nproc_per_node=${NUM_GPUS} main.py \
+python -m torch.distributed.run --nproc_per_node=${NUM_GPUS} main.py \
     --dataset ${CONFIG} \
     --loss-weights Slow=0.25 Fast=0.25 \
     --work-dir ${WORK_DIR} \
