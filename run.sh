@@ -2,7 +2,8 @@
 
 # Description: Launch DDP training and log all output to a timestamped logfile
 
-NUM_GPUS=4
+NUM_AVAILABLE=$(nvidia-smi -L | wc -l)
+NUM_GPUS=${NUM_GPUS:-$NUM_AVAILABLE}
 CONFIG=phoenix2014
 WORK_DIR=./work_dir/${CONFIG}/
 

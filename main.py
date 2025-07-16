@@ -141,7 +141,7 @@ class Processor():
         }, save_path)
 
     def loading(self):
-        self.device.set_device(self.arg.device)
+        # self.device.set_device(self.arg.device)
         print("Loading model")
         model_class = import_class(self.arg.model)
         model = model_class(
