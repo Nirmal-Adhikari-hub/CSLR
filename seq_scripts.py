@@ -10,13 +10,23 @@ from evaluation.slr_eval.wer_calculation import evaluate
 from torch.cuda.amp import autocast as autocast
 from torch.cuda.amp import GradScaler
 
+import torch.distributed as dist
+
+def is_main_process():
+    # Returns True on either non-distributed runs or on rank 0 in DDP
+    return not dist.is_initialized() or dist.get_rank() == 0
 
 def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
     model.train()
     loss_value = []
     clr = [group['lr'] for group in optimizer.optimizer.param_groups]
     scaler = GradScaler()
-    tqdm_loader = tqdm(loader, ncols=100)
+
+    # tqdm_loader = tqdm(loader, ncols=100)
+    # only show tqdm on main process
+    disable_tqdm = dist.is_initialized() and dist.get_rank() != 0
+    tqdm_loader = tqdm(loader, ncols=100, disable=disable_tqdm)
+
     nan = 0
 
     # 🔁 Set epoch for DistributedSampler if present
@@ -31,11 +41,13 @@ def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
         optimizer.zero_grad()
         with autocast():
             ret_dict = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
-            loss = model.criterion_calculation(ret_dict, label, label_lgt)
+            # loss = model.criterion_calculation(ret_dict, label, label_lgt)
+            loss = model.module.criterion_calculation(ret_dict, label, label_lgt)
+
         if np.isinf(loss.item()) or np.isnan(loss.item()):
-            print('loss is nan')
-            print(str(data[1]) + '  frames')
-            print(str(data[3]) + '  glosses')
+            print('loss is nan') if is_main_process() else None
+            print(str(data[1]) + '  frames') if is_main_process() else None
+            print(str(data[3]) + '  glosses') if is_main_process() else None
             del ret_dict
             del loss
             nan += 1
@@ -50,12 +62,12 @@ def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
         if batch_idx % recoder.log_interval == 0:
             recoder.print_log(
                 '\tEpoch: {}, Batch({}/{}) done. Loss: {:.8f}  lr:{:.6f}'
-                    .format(epoch_idx, batch_idx, len(loader), loss.item(), clr[0]))
+                    .format(epoch_idx, batch_idx, len(loader), loss.item(), clr[0])) if is_main_process() else None
         tqdm_loader.set_postfix({'Loss': loss.item()})
         del ret_dict
         del loss
     optimizer.scheduler.step()
-    recoder.print_log('\tMean training loss: {:.10f}.'.format(np.mean(loss_value)))
+    recoder.print_log('\tMean training loss: {:.10f}.'.format(np.mean(loss_value))) if is_main_process() else None
     return
 
 
@@ -66,7 +78,8 @@ def seq_eval(cfg, loader, model, device, mode, epoch, work_dir, recoder,
     total_info = []
     total_conv_sent = []
     stat = {i: [0, 0] for i in range(len(loader.dataset.dict))}
-    for batch_idx, data in enumerate(tqdm(loader, ncols=100)):
+    disable_tqdm = dist.is_initialized() and dist.get_rank() != 0
+    for batch_idx, data in enumerate(tqdm(loader, ncols=100, disable=disable_tqdm)):
         recoder.record_timer("device")
         vid = data[0].to(device, non_blocking=True)
         vid_lgt = data[1].to(device, non_blocking=True)
@@ -99,7 +112,7 @@ def seq_eval(cfg, loader, model, device, mode, epoch, work_dir, recoder,
             triplet=True,
         )
     except:
-        print("Unexpected error:", sys.exc_info()[0])
+        print("Unexpected error:", sys.exc_info()[0]) if is_main_process() else None
         lstm_ret = 100.0
     finally:
         pass
@@ -111,7 +124,7 @@ def seq_eval(cfg, loader, model, device, mode, epoch, work_dir, recoder,
     del vid_lgt
     del label
     del label_lgt
-    recoder.print_log(f"Epoch {epoch}, {mode} {lstm_ret: 2.2f}%", f"{work_dir}/{mode}.txt")
+    recoder.print_log(f"Epoch {epoch}, {mode} {lstm_ret: 2.2f}%", f"{work_dir}/{mode}.txt") if is_main_process() else None
     return lstm_ret
 
 
