@@ -27,6 +27,9 @@ import datetime
 import os
 import shutil
 
+import torch.distributed as dist
+
+
 def prepare_work_dir(work_dir):
     if os.path.exists(work_dir):
         try:
@@ -44,80 +47,80 @@ def prepare_work_dir(work_dir):
 
 class Processor():
     def __init__(self, arg):
+        # Distributed setup
         self.arg = arg
-        # if os.path.exists(self.arg.work_dir):
-        #     answer = input('Current dir exists, do you want to remove and refresh it?\n')
-        #     if answer in ['yes','y','ok','1']:
-        #         print('Dir removed !')
-        #         shutil.rmtree(self.arg.work_dir, ignore_errors=True)
-        #         os.makedirs(self.arg.work_dir)
-        #     else:
-        #         print('Dir Not removed !')
-        # else:
-        #     os.makedirs(self.arg.work_dir)
+        
+        # Ensure work_dir ends with '/'
         if not self.arg.work_dir.endswith('/'):
-            # self.arg.work_dir = os.path.join(self.arg.work_dir, '')
             self.arg.work_dir = os.path.join(self.arg.work_dir, '')
 
-        # shutil.copy2(__file__, self.arg.work_dir)
-        # shutil.copy2('./configs/baseline.yaml', self.arg.work_dir)
-        try:
-            shutil.copy2(__file__, self.arg.work_dir)
-        except FileNotFoundError:
-            print(f"⚠️  Could not copy current file (__file__)")
+        # Only rank 0 should perform file copy operations to avoid race conditions
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            # Copy this script
+            try:
+                shutil.copy2(__file__, self.arg.work_dir)
+            except FileNotFoundError:
+                print(f"⚠️  Could not copy current file (__file__)")
 
-        try:
-            shutil.copy2('./configs/baseline.yaml', self.arg.work_dir)
-        except FileNotFoundError:
-            print(f"⚠️  baseline.yaml not found.")
+            # Copy baseline config
+            try:
+                shutil.copy2('./configs/baseline.yaml', self.arg.work_dir)
+            except FileNotFoundError:
+                print(f"⚠️  baseline.yaml not found.")
 
+            # Ignore cache files
+            ignore_patterns = shutil.ignore_patterns('__pycache__', '*.pyc')
 
-        # define an ignore pattern for any __pycache__ or .pyc files
-        ignore_patterns = shutil.ignore_patterns('__pycache__', '*.pyc')
+            # Copy slowfast_modules
+            slowfast_dst = os.path.join(self.arg.work_dir, 'slowfast_modules')
+            shutil.copytree(
+                'slowfast_modules', slowfast_dst,
+                dirs_exist_ok=True, ignore=ignore_patterns
+            )
 
-        # copy_tree('slowfast_modules', self.arg.work_dir + 'slowfast_modules')        
-        slowfast_dst = os.path.join(self.arg.work_dir, 'slowfast_modules')
-        if os.path.exists(slowfast_dst):
-            shutil.rmtree(slowfast_dst, ignore_errors=True)
-        shutil.copytree(
-                            'slowfast_modules',
-                            slowfast_dst,
-                            dirs_exist_ok=True,
-                            ignore=ignore_patterns
-                        )
+            # Copy modules
+            modules_dst = os.path.join(self.arg.work_dir, 'modules')
+            shutil.copytree(
+                'modules', modules_dst,
+                dirs_exist_ok=True, ignore=ignore_patterns
+            )
 
-        # copy_tree('modules', self.arg.work_dir + 'modules')
-        modules_dst = os.path.join(self.arg.work_dir, 'modules')
-        if os.path.exists(modules_dst):
-            shutil.rmtree(modules_dst, ignore_errors=True)
-        shutil.copytree(
-                            'modules',
-                            modules_dst,
-                            dirs_exist_ok=True,
-                            ignore=ignore_patterns
-                        )
+        # Barrier: wait for rank 0 to finish copying
+        if dist.is_initialized():
+            dist.barrier()
 
+        # Recorder setup
         self.recoder = utils.Recorder(self.arg.work_dir, self.arg.print_log, self.arg.log_interval)
+        
+        # Decide whether to load slowfast pkl
         if self.arg.load_checkpoints or self.arg.load_weights:
             self.load_slowfast_pkl = False
         else:
             self.load_slowfast_pkl = True
+
+        # Save args and fix randomness
         self.save_arg()
         if self.arg.random_fix:
             self.rng = utils.RandomState(seed=self.arg.random_seed)
-        # self.device = utils.GpuDataParallel()
+
+        # Device setup for DDP
         self.device = torch.device(f"cuda:{self.arg.local_rank}")
         self.recoder = utils.Recorder(self.arg.work_dir, self.arg.print_log, self.arg.log_interval)
+
+        # Data structures
         self.dataset = {}
         self.data_loader = {}
         self.gloss_dict = np.load(self.arg.dataset_info['dict_path'], allow_pickle=True).item()
         self.arg.model_args['num_classes'] = len(self.gloss_dict) + 1
         self.arg.optimizer_args['num_epoch'] = self.arg.num_epoch
-        slowfast_args=[]
+
+        # Flatten slowfast_args to list
+        slowfast_args = []
         for key, value in self.arg.slowfast_args.items():
-            slowfast_args.append(key)
-            slowfast_args.append(value)
+            slowfast_args.extend([key, value])
         self.arg.slowfast_args = slowfast_args
+
+        # Load model and optimizer
         self.model, self.optimizer = self.loading()
 
     def start(self):
@@ -344,8 +347,6 @@ def import_class(name):
     mod = getattr(mod, components[1])
     return mod
 
-
-import torch.distributed as dist
 
 def setup_ddp():
     dist.init_process_group(backend='nccl')
