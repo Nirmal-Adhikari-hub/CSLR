@@ -78,54 +78,69 @@ def seq_eval(cfg, loader, model, device, mode, epoch, work_dir, recoder,
     total_info = []
     total_conv_sent = []
     stat = {i: [0, 0] for i in range(len(loader.dataset.dict))}
-    disable_tqdm = dist.is_initialized() and dist.get_rank() != 0
-    for batch_idx, data in enumerate(tqdm(loader, ncols=100, disable=disable_tqdm)):
-        recoder.record_timer("device")
-        vid = data[0].to(device, non_blocking=True)
-        vid_lgt = data[1].to(device, non_blocking=True)
-        label = data[2].to(device, non_blocking=True)
-        label_lgt = data[3].to(device, non_blocking=True)
+
+    # initialize here so that later `del conv_ret` is safe
+    conv_ret = None
+    lstm_ret = None
+
+    for batch_idx, data in enumerate(tqdm(loader, ncols=100)):
+        if is_main_process():
+            recoder.record_timer("device")
+
+        vid = data[0].to(device)
+        vid_lgt = data[1].to(device)
+        label = data[2].to(device)
+        label_lgt = data[3].to(device)
+
         with torch.no_grad():
             ret_dict = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
 
-        total_info += [file_name.split("|")[0] for file_name in data[-1]]
+        total_info += [f.split("|")[0] for f in data[-1]]
         total_sent += ret_dict['recognized_sents']
         total_conv_sent += ret_dict['conv_sents']
+
     try:
-        python_eval = True if evaluate_tool == "python" else False
-        write2file(work_dir + "output-hypothesis-{}.ctm".format(mode), total_info, total_sent)
-        write2file(work_dir + "output-hypothesis-{}-conv.ctm".format(mode), total_info,
-                   total_conv_sent)
+        python_eval = (evaluate_tool == "python")
+
+        write2file(f"{work_dir}output-hypothesis-{mode}.ctm",
+                   total_info, total_sent)
+        write2file(f"{work_dir}output-hypothesis-{mode}-conv.ctm",
+                   total_info, total_conv_sent)
+
         conv_ret = evaluate(
-            prefix=work_dir, mode=mode, output_file="output-hypothesis-{}-conv.ctm".format(mode),
+            prefix=work_dir,
+            mode=mode,
+            output_file=f"output-hypothesis-{mode}-conv.ctm",
             evaluate_dir=cfg.dataset_info['evaluation_dir'],
             evaluate_prefix=cfg.dataset_info['evaluation_prefix'],
-            output_dir="epoch_{}_result/".format(epoch),
+            output_dir=f"epoch_{epoch}_result/",
             python_evaluate=python_eval,
         )
         lstm_ret = evaluate(
-            prefix=work_dir, mode=mode, output_file="output-hypothesis-{}.ctm".format(mode),
+            prefix=work_dir,
+            mode=mode,
+            output_file=f"output-hypothesis-{mode}.ctm",
             evaluate_dir=cfg.dataset_info['evaluation_dir'],
             evaluate_prefix=cfg.dataset_info['evaluation_prefix'],
-            output_dir="epoch_{}_result/".format(epoch),
+            output_dir=f"epoch_{epoch}_result/",
             python_evaluate=python_eval,
             triplet=True,
         )
-    except:
-        print("Unexpected error:", sys.exc_info()[0]) if is_main_process() else None
+    except Exception as e:
+        if is_main_process():
+            print(f"Unexpected error during evaluation: {e}")
         lstm_ret = 100.0
-    finally:
-        pass
-    del conv_ret
-    del total_sent
-    del total_info
-    del total_conv_sent
-    del vid
-    del vid_lgt
-    del label
-    del label_lgt
-    recoder.print_log(f"Epoch {epoch}, {mode} {lstm_ret: 2.2f}%", f"{work_dir}/{mode}.txt") if is_main_process() else None
+
+    # clean up safely
+    if conv_ret is not None:
+        del conv_ret
+    del total_sent, total_info, total_conv_sent, vid, vid_lgt, label, label_lgt
+
+    if is_main_process():
+        recoder.print_log(f"Epoch {epoch}, {mode} {lstm_ret:2.2f}%", f"{work_dir}/{mode}.txt")
+
     return lstm_ret
+
 
 
 def seq_feature_generation(loader, model, device, mode, work_dir, recoder):
