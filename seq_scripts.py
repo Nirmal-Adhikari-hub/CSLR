@@ -18,57 +18,57 @@ def is_main_process():
 
 def seq_train(loader, model, optimizer, device, epoch_idx, recoder):
     model.train()
-    loss_value = []
-    clr = [group['lr'] for group in optimizer.optimizer.param_groups]
     scaler = GradScaler()
+    lr = optimizer.optimizer.param_groups[0]['lr']
 
-    # tqdm_loader = tqdm(loader, ncols=100)
-    # only show tqdm on main process
+    # only rank 0 shows the progress bar
     disable_tqdm = dist.is_initialized() and dist.get_rank() != 0
-    tqdm_loader = tqdm(loader, ncols=100, disable=disable_tqdm)
+    pbar = tqdm(loader, ncols=100, disable=disable_tqdm)
 
-    nan = 0
+    for batch_idx, data in enumerate(pbar):
+        vid, vid_lgt, label, label_lgt = data[0], data[1], data[2], data[3]
+        vid = vid.to(device); vid_lgt = vid_lgt.to(device)
+        label = label.to(device); label_lgt = label_lgt.to(device)
 
-    # 🔁 Set epoch for DistributedSampler if present
-    if hasattr(loader, "sampler") and hasattr(loader.sampler, "set_epoch"):
-        loader.sampler.set_epoch(epoch_idx)
-
-    for batch_idx, data in enumerate(tqdm_loader):
-        vid = data[0].to(device, non_blocking=True)
-        vid_lgt = data[1].to(device, non_blocking=True)
-        label = data[2].to(device, non_blocking=True)
-        label_lgt = data[3].to(device, non_blocking=True)
         optimizer.zero_grad()
         with autocast():
-            ret_dict = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
-            # loss = model.criterion_calculation(ret_dict, label, label_lgt)
-            loss = model.module.criterion_calculation(ret_dict, label, label_lgt)
+            ret = model(vid, vid_lgt, label=label, label_lgt=label_lgt)
+            loss = model.module.criterion_calculation(ret, label, label_lgt)
 
-        if np.isinf(loss.item()) or np.isnan(loss.item()):
-            print('loss is nan') if is_main_process() else None
-            print(str(data[1]) + '  frames') if is_main_process() else None
-            print(str(data[3]) + '  glosses') if is_main_process() else None
-            del ret_dict
-            del loss
-            nan += 1
-            if nan == 30:
-                exit()
-            continue
+        # 1) Detect NaN/Inf and log once
+        if torch.isnan(loss) or torch.isinf(loss):
+            if is_main_process():
+                recoder.print_log(
+                    f"⚠️  NaN/Inf loss at epoch {epoch_idx}, batch {batch_idx}. "
+                    f"Lowering LR from {lr:.2e} to {lr*0.5:.2e}"
+                )
+            # lower LR by half
+            for g in optimizer.optimizer.param_groups:
+                g['lr'] = lr * 0.5
+            loss = torch.zeros_like(loss)
+
+        # 2) Backward + gradient clipping + optimizer step
         scaler.scale(loss).backward()
+
+        # unscale first, then clip
+        scaler.unscale_(optimizer.optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+
         scaler.step(optimizer.optimizer)
         scaler.update()
-        # nn.utils.clip_grad_norm_(model.rnn.parameters(), 5)
-        loss_value.append(loss.item())
-        if batch_idx % recoder.log_interval == 0:
+
+        # logging
+        if batch_idx % recoder.log_interval == 0 and is_main_process():
             recoder.print_log(
-                '\tEpoch: {}, Batch({}/{}) done. Loss: {:.8f}  lr:{:.6f}'
-                    .format(epoch_idx, batch_idx, len(loader), loss.item(), clr[0])) if is_main_process() else None
-        tqdm_loader.set_postfix({'Loss': loss.item()})
-        del ret_dict
-        del loss
+                f"\tEpoch: {epoch_idx}, Batch({batch_idx}/{len(loader)}) "
+                f"Loss: {loss.item():.6f}  lr:{optimizer.optimizer.param_groups[0]['lr']:.6f}"
+            )
+        pbar.set_postfix({'Loss': loss.item()})
+
+    # step scheduler once per epoch
     optimizer.scheduler.step()
-    recoder.print_log('\tMean training loss: {:.10f}.'.format(np.mean(loss_value))) if is_main_process() else None
-    return
+    if is_main_process():
+        recoder.print_log(f"\tEpoch {epoch_idx} finished. Current LR: {optimizer.optimizer.param_groups[0]['lr']:.2e}")
 
 
 def seq_eval(cfg, loader, model, device, mode, epoch, work_dir, recoder,
