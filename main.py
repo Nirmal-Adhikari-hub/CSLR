@@ -285,7 +285,8 @@ class Processor():
         if "optimizer_state_dict" in state_dict.keys():
             print("Loading optimizer parameters...")
             optimizer.load_state_dict(state_dict["optimizer_state_dict"])
-            optimizer.to(self.device.output_device)
+            # move optimizer state to the correct device
+            optimizer.to(self.device)
         if "scheduler_state_dict" in state_dict.keys():
             print("Loading scheduler parameters...")
             optimizer.scheduler.load_state_dict(state_dict["scheduler_state_dict"])
