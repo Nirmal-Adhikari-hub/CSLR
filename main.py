@@ -247,7 +247,10 @@ class Processor():
         return model
 
     def load_model_weights(self, model, weight_path):
-        state_dict = torch.load(weight_path)
+        # map all tensors to this rank’s GPU
+        map_loc = lambda storage, loc: storage.cuda(self.arg.local_rank)
+        state_dict = torch.load(weight_path, map_location=map_loc)
+        # state_dict = torch.load(weight_path)
         if len(self.arg.ignore_weights):
             for w in self.arg.ignore_weights:
                 if state_dict.pop(w, None) is not None:
@@ -268,7 +271,9 @@ class Processor():
 
     def load_checkpoint_weights(self, model, optimizer):
         self.load_model_weights(model, self.arg.load_checkpoints)
-        state_dict = torch.load(self.arg.load_checkpoints)
+        # remap checkpoint tensors onto this rank’s GPU
+        map_loc = lambda storage, loc: storage.cuda(self.arg.local_rank)
+        state_dict = torch.load(self.arg.load_checkpoints, map_location=map_loc)
 
         if len(torch.cuda.get_rng_state_all()) == len(state_dict['rng_state']['cuda']):
             print("Loading random seeds...")
