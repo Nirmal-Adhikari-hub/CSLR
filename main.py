@@ -263,11 +263,15 @@ class Processor():
 
     @staticmethod
     def modified_weights(state_dict, modified=False):
-        state_dict = OrderedDict([(k.replace('.module', ''), v) for k, v in state_dict.items()])
-        if not modified:
-            return state_dict
-        modified_dict = dict()
-        return modified_dict
+        # Strip a leading "module." from every key if present
+        new_dict = OrderedDict()
+        for k, v in state_dict.items():
+            new_key = k
+            if new_key.startswith('module.'):
+                new_key = new_key[len('module.'):]
+            new_dict[new_key] = v
+        # if you had any additional modifications, handle them here...
+        return new_dict
 
     def load_checkpoint_weights(self, model, optimizer):
         self.load_model_weights(model, self.arg.load_checkpoints)
